@@ -32,7 +32,7 @@ class DatasetWithColmapDepth(Dataset):
     def __init__(self, root_dir, split, n_views=3, levels=1, downSample=1.0, max_len=-1):
         base_dir = os.path.join(root_dir, 'data/')
 
-        dataset_list = ['dtu', 'ibrnet_collected', 'real_iconic_noface'] 
+        dataset_list = ['dtu', 'ibrnet_collected', 'real_iconic_noface']  #
         #self.name = name
         
         self.testskip = 4
@@ -129,8 +129,6 @@ class DatasetWithColmapDepth(Dataset):
         train_poses = self.train_poses[train_set_id]
         train_intrinsics = self.train_intrinsics[train_set_id]
 
-        rgb, intrinsics = self.resize_images(rgb, intrinsics)
-
         img_size = rgb.shape[:2]
         camera = np.concatenate((list(img_size), intrinsics.flatten(),
                                  render_pose.flatten())).astype(np.float32)
@@ -176,8 +174,6 @@ class DatasetWithColmapDepth(Dataset):
 
             train_pose = train_poses[id]
             train_intrinsics_ = train_intrinsics[id]
-            
-            src_rgb, train_intrinsics_ = self.resize_images(src_rgb, train_intrinsics_)
             
             src_rgbs.append(src_rgb)
             img_size = src_rgb.shape[:2]
