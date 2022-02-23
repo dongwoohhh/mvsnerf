@@ -158,6 +158,7 @@ class MVSDatasetDTU(Dataset):
             img = Image.open(img_filename)
             img_wh = np.round(np.array(img.size) * self.downSample).astype('int')
             img = img.resize(img_wh, Image.BILINEAR)
+            import pdb; pdb.set_trace()
             img = self.transform(img)
             imgs += [img]
 
@@ -195,7 +196,7 @@ class MVSDatasetDTU(Dataset):
         intrinsics, w2cs, c2ws, near_fars = np.stack(intrinsics), np.stack(w2cs), np.stack(c2ws), np.stack(near_fars)
         view_ids_all = [target_view] + list(src_views) if type(src_views[0]) is not list else [j for sub in src_views for j in sub]
         c2ws_all = self.cam2worlds[self.remap[view_ids_all]]
-        
+
         sample['images'] = imgs  # (V, 3, H, W)
         sample['depths_h'] = depths_h.astype(np.float32)  # (V, H, W)
         sample['w2cs'] = w2cs.astype(np.float32)  # (V, 4, 4)

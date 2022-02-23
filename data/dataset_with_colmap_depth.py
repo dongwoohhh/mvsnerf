@@ -19,6 +19,7 @@ import cv2
 from scipy.interpolate import griddata
 import imageio
 import torch
+from torchvision import transforms as T
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 import sys
@@ -32,12 +33,15 @@ class DatasetWithColmapDepth(Dataset):
     def __init__(self, root_dir, split, n_views=3, levels=1, downSample=1.0, max_len=-1):
         base_dir = os.path.join(root_dir, 'data/')
 
-        dataset_list = ['dtu', 'ibrnet_collected', 'real_iconic_noface']  #
+        dataset_list = ['dtu',]#[ 'ibrnet_collected', 'real_iconic_noface']  #
+        #dataset_list = ['dtu', 'ibrnet_collected', 'real_iconic_noface']  #
         #self.name = name
         
         self.testskip = 4
         scenes = None
         warnings.filterwarnings('ignore')
+        self.define_transforms()
+
 
         self.mode = split  # train / test / validation
         self.num_source_views = n_views
@@ -113,6 +117,13 @@ class DatasetWithColmapDepth(Dataset):
 
     def __len__(self):
         return len(self.render_rgb_files)
+
+    def define_transforms(self):
+        self.transform = T.Compose([T.ToTensor(),
+                                    T.Normalize(mean=[0.485, 0.456, 0.406],
+                                                std=[0.229, 0.224, 0.225]),
+                                    ])
+
 
     def __getitem__(self, idx):
         rgb_file = self.render_rgb_files[idx]
