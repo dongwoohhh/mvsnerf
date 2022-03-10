@@ -40,7 +40,6 @@ class DatasetWithColmapDepth(Dataset):
         self.testskip = 4
         scenes = None
         warnings.filterwarnings('ignore')
-        self.define_transforms()
 
 
         self.mode = split  # train / test / validation
@@ -74,13 +73,25 @@ class DatasetWithColmapDepth(Dataset):
             elif split == "test":
                 file_list = os.path.join(base_dir, name, list_prefix+"_test.lst")
 
+            if name == 'dtu':
+                factor=1.0
+            elif name in ['ibrnet_collected_1']:
+                factor=1.125
+            elif name in ['nerf_llff_data', 'real_iconic_noface', 'ibrnet_collected_2']:
+                factor=4.5
+            else:
+                factor=1.0
+            self.factor = factor
+            
+            
             with open(file_list, "r") as f:
                 scenes = [x.strip() for x in f.readlines()]
             
             for i, scene in enumerate(scenes):
                 scene_path = os.path.join(base_dir, name, scene)
 
-                _, poses, bds, render_poses, i_test, rgb_files, sc = load_llff_data_depth(scene_path, load_imgs=False, factor=1)
+                _, poses, bds, render_poses, i_test, rgb_files, sc = load_llff_data_depth(scene_path, load_imgs=False, factor=factor)
+                import pdb; pdb.set_trace()
                 near_depth = np.min(bds)
                 far_depth = np.max(bds)
                 intrinsics, c2w_mats = batch_parse_llff_poses(poses)
@@ -117,13 +128,6 @@ class DatasetWithColmapDepth(Dataset):
 
     def __len__(self):
         return len(self.render_rgb_files)
-
-    def define_transforms(self):
-        self.transform = T.Compose([T.ToTensor(),
-                                    T.Normalize(mean=[0.485, 0.456, 0.406],
-                                                std=[0.229, 0.224, 0.225]),
-                                    ])
-
 
     def __getitem__(self, idx):
         rgb_file = self.render_rgb_files[idx]
@@ -226,7 +230,7 @@ class DatasetWithColmapDepth(Dataset):
         # depth range.
         if self.name[idx] in ['dtu', 'nerf_synthetic']:
             depth_range = torch.tensor([depth_range[0] * 0.9, depth_range[1] * 1.1])
-        elif self.name[idx] in ['nerf_llff_data', 'ibrnet_collected', 'scannet', 'real_iconic_noface', 'RealEstate10K-subset']:
+        elif self.name[idx] in ['nerf_llff_data', 'ibrnet_collected_1', 'ibrnet_collected_2', 'scannet', 'real_iconic_noface', 'RealEstate10K-subset']:
             depth_range = torch.tensor([depth_range[0] * 0.9, depth_range[1] * 1.5])
         else:
             import pdb;pdb.set_trace()

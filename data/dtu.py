@@ -158,7 +158,7 @@ class MVSDatasetDTU(Dataset):
             img = Image.open(img_filename)
             img_wh = np.round(np.array(img.size) * self.downSample).astype('int')
             img = img.resize(img_wh, Image.BILINEAR)
-            import pdb; pdb.set_trace()
+
             img = self.transform(img)
             imgs += [img]
 
