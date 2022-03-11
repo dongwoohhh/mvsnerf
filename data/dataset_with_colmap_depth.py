@@ -33,14 +33,14 @@ class DatasetWithColmapDepth(Dataset):
     def __init__(self, root_dir, split, n_views=3, levels=1, downSample=1.0, max_len=-1):
         base_dir = os.path.join(root_dir, 'data/')
 
-        dataset_list = ['dtu',]#[ 'ibrnet_collected', 'real_iconic_noface']  #
+        dataset_list = ['ibrnet_collected_1',]#[ 'ibrnet_collected', 'real_iconic_noface']  #
         #dataset_list = ['dtu', 'ibrnet_collected', 'real_iconic_noface']  #
         #self.name = name
         
         self.testskip = 4
         scenes = None
         warnings.filterwarnings('ignore')
-
+        self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
 
         self.mode = split  # train / test / validation
         self.num_source_views = n_views
@@ -91,7 +91,10 @@ class DatasetWithColmapDepth(Dataset):
                 scene_path = os.path.join(base_dir, name, scene)
 
                 _, poses, bds, render_poses, i_test, rgb_files, sc = load_llff_data_depth(scene_path, load_imgs=False, factor=factor)
-                import pdb; pdb.set_trace()
+
+                poses[:, :, :4] = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
+                poses[:, :, :4] = poses[:, :, :4] @ self.blender2opencv
+
                 near_depth = np.min(bds)
                 far_depth = np.max(bds)
                 intrinsics, c2w_mats = batch_parse_llff_poses(poses)
