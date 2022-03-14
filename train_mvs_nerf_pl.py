@@ -111,8 +111,7 @@ class MVSSystem(LightningModule):
 
 
         volume_feature, img_feat, depth_values = self.MVSNet(imgs[:, :3], proj_mats[:, :3], near_fars[0,0],pad=args.pad)
-        if self.args.dataset_name == 'dtu':
-            imgs = self.unpreprocess(imgs)
+        imgs = self.unpreprocess(imgs)
 
 
         N_rays, N_samples = args.batch_size, args.N_samples
