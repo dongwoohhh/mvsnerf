@@ -183,6 +183,7 @@ class DTU_ft(Dataset):
                                         1)]  # (h*w, 8)
 
         self.poses = np.stack(self.poses)
+        #import pdb;pdb.set_trace()
         if 'train' == self.split:
             self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
             self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)

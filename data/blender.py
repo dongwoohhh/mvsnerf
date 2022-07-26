@@ -27,16 +27,19 @@ class BlenderDataset(Dataset):
         self.white_back = True
 
     def read_meta(self):
-        with open(os.path.join(self.root_dir, f"transforms_train.json"), 'r') as f:
+        with open(os.path.join(self.root_dir, "transforms_{}.json".format(self.split)), 'r') as f:
             self.meta = json.load(f)
 
         # sub select training views from pairing file
-        if os.path.exists('configs/pairs.th'):
-            name = os.path.basename(self.root_dir)
-            self.img_idx = torch.load('configs/pairs.th')[f'{name}_{self.split}']
-            self.meta['frames'] = [self.meta['frames'][idx] for idx in self.img_idx]
-            print(f'===> {self.split}ing index: {self.img_idx}')
-
+        #if os.path.exists('configs/pairs.th'):
+        #    name = os.path.basename(self.root_dir)
+        if self.split == 'train':
+            self.img_idx = np.arange(100)#torch.load('configs/pairs.th')[f'{name}_{self.split}']
+        else:
+            self.img_idx = np.arange(200)[::8]
+        self.meta['frames'] = [self.meta['frames'][idx] for idx in self.img_idx]
+        print(f'===> {self.split}ing index: {self.img_idx}')
+        #import pdb; pdb.set_trace()
         w, h = self.img_wh
         self.focal = 0.5 * 800 / np.tan(0.5 * self.meta['camera_angle_x'])  # original focal length
         self.focal *= self.img_wh[0] / 800  # modify focal length to match size self.img_wh
@@ -146,6 +149,8 @@ class BlenderDataset(Dataset):
         return imgs, proj_mats, near_far_source, pose_source
 
     def load_poses_all(self, file=f"transforms_train.json"):
+        raise NotImplementedError
+        
         with open(os.path.join(self.root_dir, file), 'r') as f:
             meta = json.load(f)
 

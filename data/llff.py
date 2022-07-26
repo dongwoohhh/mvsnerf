@@ -213,11 +213,23 @@ class LLFFDataset(Dataset):
         self.poses[..., 3] /= scale_factor
 
         # sub select training views from pairing file
-        if os.path.exists('configs/pairs.th'):
+        
+        if 0:#os.path.exists('configs/pairs.th'):
             name = os.path.basename(self.root_dir)
             self.img_idx = torch.load('configs/pairs.th')[f'{name}_{self.split}']
 
             print(f'===> {self.split}ing index: {self.img_idx}')
+
+        self.i_test = np.arange(self.poses.shape[0])[::8]
+        self.i_train = np.array([j for j in np.arange(int(self.poses.shape[0])) if
+                            (j not in self.i_test and j not in self.i_test)])
+        
+        if self.split == 'train':
+            self.img_idx = self.i_train    
+            
+        else:
+            self.img_idx = self.i_test
+
 
         # distances_from_center = np.linalg.norm(self.poses[..., 3], axis=1)
         # val_idx = np.argmin(distances_from_center)  # choose val image as the closest to
