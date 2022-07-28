@@ -79,7 +79,7 @@ class DTU_ft(Dataset):
         # if do not specify source views, load index from pairing file
         if pair_idx is None:
             pair_idx = self.pair_idx[0][:3]
-            # print(f'====> ref idx: {pair_idx}')
+            print(f'====> ref idx: {pair_idx}')
 
         imgs, proj_mats = [], []
         intrinsics, c2ws, w2cs = [],[],[]
@@ -159,6 +159,7 @@ class DTU_ft(Dataset):
             depth_filename = os.path.join(self.root_dir,
                                           f'Depths/{self.scan}/depth_map_{idx:04d}.pfm')
             self.image_paths += [image_path]
+
             img = Image.open(image_path)
             img = img.resize(self.img_wh, Image.LANCZOS)
             img = self.transform(img)  # (3, h, w)
@@ -183,10 +184,11 @@ class DTU_ft(Dataset):
                                         1)]  # (h*w, 8)
 
         self.poses = np.stack(self.poses)
-        #import pdb;pdb.set_trace()
+        self.poses_train = self.poses
+
         if 'train' == self.split:
-            self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
-            self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)
+            self.all_rays = torch.stack(self.all_rays)  # (len(self.meta['frames])*h*w, 3)
+            self.all_rgbs = torch.stack(self.all_rgbs)  # (len(self.meta['frames])*h*w, 3)
         else:
             self.all_rays = torch.stack(self.all_rays, 0)  # (len(self.meta['frames]),h*w, 3)
             self.all_rgbs = torch.stack(self.all_rgbs, 0).reshape(-1,*self.img_wh[::-1], 3)  # (len(self.meta['frames]),h,w,3)
@@ -195,7 +197,7 @@ class DTU_ft(Dataset):
 
     def __len__(self):
         if self.split == 'train':
-            return len(self.all_rays)
+            return len(self.img_idx)
         return len(self.all_rgbs)
 
     def __getitem__(self, idx):
@@ -203,10 +205,14 @@ class DTU_ft(Dataset):
             # view, ray_idx = torch.randint(0,len(self.all_rays),(1,)), torch.randperm(self.all_rays.shape[1])[:self.args.batch_size]
             # sample = {'rays': self.all_rays[view,ray_idx],
             #           'rgbs': self.all_rgbs[view,ray_idx]}
-
-
-            sample = {'rays': self.all_rays[idx],
-                      'rgbs': self.all_rgbs[idx]}
+            all_rays = self.all_rays[idx]
+            all_rgbs = self.all_rgbs[idx]
+            
+            perm = torch.randperm(all_rays.shape[0])
+            inds_sampled = perm[:self.args.batch_size]
+            sample = {'rays': all_rays[inds_sampled],
+                      'rgbs': all_rgbs[inds_sampled],
+                      'poses': self.poses[idx]}
 
         else:  # create data for each image separately
 
@@ -216,7 +222,8 @@ class DTU_ft(Dataset):
 
             sample = {'rays': rays,
                       'rgbs': img,
-                      'depth': depth}
+                      'depth': depth,
+                      'poses': self.poses[idx]}
         sample['idx'] = idx
         return sample
 

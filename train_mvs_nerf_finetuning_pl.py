@@ -48,14 +48,17 @@ class MVSSystem(LightningModule):
         self.render_kwargs_train.pop('network_mvs')
 
         dataset = dataset_dict[self.args.dataset_name]
+        
         self.train_dataset = dataset(args, split='train')
         self.val_dataset   = dataset(args, split='val')
-        self.init_volume()
-        self.grad_vars += list(self.volume.parameters())
+
+        #self.grad_vars += list(self.volume.parameters())
 
 
     def init_volume(self):
-
+        #positions = self.train_dataset.poses[:, :3, 3]
+        #dis = np.sum(np.abs(positions - dataset_val.poses[[i],:3,3]), axis=-1)
+        
         self.imgs, self.proj_mats, self.near_far_source, self.pose_source = self.train_dataset.read_source_views(device=device)
         ckpts = torch.load(args.ckpt)
         if 'volume' not in ckpts.keys():
@@ -97,11 +100,14 @@ class MVSSystem(LightningModule):
             features = torch.cat((self.volume.feat_volume, self.color_feature), dim=1).permute(0,2,3,4,1).reshape(D*H,W,-1)
             self.density_volume = render_density(network_fn, self.vox_pts, features, network_query_fn).reshape(D,H,W)
         del features
-
+    
     def decode_batch(self, batch):
         rays = batch['rays'].squeeze()  # (B, 8)
         rgbs = batch['rgbs'].squeeze()  # (B, 3)
-        return rays, rgbs
+        poses = batch['poses'].squeeze()
+        return rays, rgbs, poses
+    
+    
 
     def unpreprocess(self, data, shape=(1,1,3,1,1)):
         # to unnormalize image for visualization
@@ -126,8 +132,8 @@ class MVSSystem(LightningModule):
     def train_dataloader(self):
         return DataLoader(self.train_dataset,
                           shuffle=True,
-                          num_workers=8,
-                          batch_size=args.batch_size,
+                          num_workers=4,
+                          batch_size=1,
                           pin_memory=True)
 
     def val_dataloader(self):
@@ -138,31 +144,32 @@ class MVSSystem(LightningModule):
                           pin_memory=True)
 
     def training_step(self, batch, batch_nb):
+        rays, rgbs_target, poses_target = self.decode_batch(batch)
 
-        rays, rgbs_target = self.decode_batch(batch)
+        poses_target = poses_target.cpu().numpy()
+        positions = self.train_dataset.poses_train[:, :3, 3]
+        dis = np.sum(np.abs(positions - poses_target[:3,3]), axis=-1)
+        pair_idx = np.argsort(dis)[1:4]
+        pair_idx = [self.train_dataset.img_idx[item] for item in pair_idx]
 
-        if args.use_density_volume and 0 == self.global_step%200:
-            self.update_density_volume()
+        imgs_source, proj_mats, near_far_source, pose_source = self.train_dataset.read_source_views(pair_idx=pair_idx,device=device)
+        volume_feature, _, _ = self.MVSNet(imgs_source, proj_mats, near_far_source, pad=self.args.pad)
+        imgs_source = self.unpreprocess(imgs_source)
+
 
         xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher(rays, N_samples=args.N_samples,
                         lindisp=args.use_disp, perturb=args.perturb)
-
         # Converting world coordinate to ndc coordinate
-        H,W = self.imgs.shape[-2:]
+        H,W = imgs_source.shape[-2:]
         inv_scale = torch.tensor([W - 1, H - 1]).to(device)
-        w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0]
-        xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale, near=self.near_far_source[0],far=self.near_far_source[1], pad=args.pad, lindisp=args.use_disp)
+        w2c_ref, intrinsic_ref = pose_source['w2cs'][0], pose_source['intrinsics'][0]
+        xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale, near=near_far_source[0],far=near_far_source[1], pad=self.args.pad, lindisp=args.use_disp)
 
         # important sampleing
-        if self.density_volume is not None and args.N_importance > 0:
-            xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays, self.density_volume, z_vals, xyz_NDC,
-                                                                          N_importance=args.N_importance)
-            xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                         near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad, lindisp=args.use_disp)
 
         # rendering
-        rgbs, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled, xyz_NDC, z_vals, rays_o, rays_d,
-                                                       self.volume, self.imgs,  **self.render_kwargs_train)
+        rgbs, disp, acc, depth_pred, alpha, extras = rendering(args, pose_source, xyz_coarse_sampled, xyz_NDC, z_vals, rays_o, rays_d,
+                                                       volume_feature, imgs_source,  **self.render_kwargs_train)
 
         log, loss = {}, 0
         if 'rgb0' in extras:
@@ -191,17 +198,28 @@ class MVSSystem(LightningModule):
 
     def validation_step(self, batch, batch_nb):
 
-        self.MVSNet.train()
-        rays, img = self.decode_batch(batch)
+        self.MVSNet.eval()#.train()
+        rays, img, poses = self.decode_batch(batch)
+        
         img = img.cpu()  # (H, W, 3)
+        poses = poses.cpu().numpy()
         # mask = batch['mask'][0]
-
+    
         N_rays_all = rays.shape[0]
 
         ##################  rendering #####################
         keys = ['val_psnr_all']
         log = init_log({}, keys)
         with torch.no_grad():
+
+            positions = self.train_dataset.poses_train[:, :3, 3]
+            dis = np.sum(np.abs(positions - poses[:3,3]), axis=-1)
+            pair_idx = np.argsort(dis)[:3]
+            pair_idx = [self.train_dataset.img_idx[item] for item in pair_idx]
+
+            imgs_source, proj_mats, near_far_source, pose_source = self.train_dataset.read_source_views(pair_idx=pair_idx,device=device)
+            volume_feature, _, _ = self.MVSNet(imgs_source, proj_mats, near_far_source, pad=self.args.pad)
+            imgs_source = self.unpreprocess(imgs_source)
 
             rgbs, depth_preds = [],[]
             for chunk_idx in range(N_rays_all//args.chunk + int(N_rays_all%args.chunk>0)):
@@ -212,23 +230,17 @@ class MVSSystem(LightningModule):
                 # Converting world coordinate to ndc coordinate
                 H, W = img.shape[:2]
                 inv_scale = torch.tensor([W - 1, H - 1]).to(device)
-                w2c_ref, intrinsic_ref = self.pose_source['w2cs'][0], self.pose_source['intrinsics'][0].clone()
+                w2c_ref, intrinsic_ref = pose_source['w2cs'][0], pose_source['intrinsics'][0].clone()
                 intrinsic_ref[:2] *= args.imgScale_test/args.imgScale_train
                 xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                             near=self.near_far_source[0], far=self.near_far_source[1], pad=args.pad*args.imgScale_test, lindisp=args.use_disp)
+                                             near=near_far_source[0], far=near_far_source[1], pad=self.args.pad*args.imgScale_test, lindisp=args.use_disp)
 
                 # important sampleing
-                if self.density_volume is not None and args.N_importance > 0:
-                    xyz_coarse_sampled, rays_o, rays_d, z_vals = ray_marcher_fine(rays[chunk_idx*args.chunk:(chunk_idx+1)*args.chunk],
-                                    self.density_volume, z_vals,xyz_NDC,N_importance=args.N_importance)
-                    xyz_NDC = get_ndc_coordinate(w2c_ref, intrinsic_ref, xyz_coarse_sampled, inv_scale,
-                                    near=self.near_far_source[0], far=self.near_far_source[1],pad=args.pad, lindisp=args.use_disp)
-
 
                 # rendering
-                rgb, disp, acc, depth_pred, alpha, extras = rendering(args, self.pose_source, xyz_coarse_sampled,
+                rgb, disp, acc, depth_pred, alpha, extras = rendering(args, pose_source, xyz_coarse_sampled,
                                                                        xyz_NDC, z_vals, rays_o, rays_d,
-                                                                       self.volume, self.imgs,
+                                                                       volume_feature, imgs_source,
                                                                        **self.render_kwargs_train)
 
                 rgbs.append(rgb.cpu());depth_preds.append(depth_pred.cpu())
@@ -238,17 +250,20 @@ class MVSSystem(LightningModule):
             img_err_abs = (rgbs - img).abs()
 
             log['val_psnr_all'] = mse2psnr(torch.mean(img_err_abs ** 2))
-            depth_r, _ = visualize_depth(depth_r, self.near_far_source)
+            depth_r, _ = visualize_depth(depth_r, near_far_source)
             self.logger.experiment.add_images('val/depth_gt_pred', depth_r[None], self.global_step)
 
             img_vis = torch.stack((img, rgbs, img_err_abs.cpu()*5)).permute(0,3,1,2)
             self.logger.experiment.add_images('val/rgb_pred_err', img_vis, self.global_step)
             os.makedirs(f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/',exist_ok=True)
+            os.makedirs(f'runs_fine_tuning/{self.args.expname}/render/',exist_ok=True)
 
             img_vis = torch.cat((img,rgbs,img_err_abs*10,depth_r.permute(1,2,0)),dim=1).numpy()
+            imageio.imwrite(f'runs_fine_tuning/{self.args.expname}/render/{self.global_step:08d}_{self.idx:02d}_pred.png',rgbs)
+            imageio.imwrite(f'runs_fine_tuning/{self.args.expname}/render/{self.global_step:08d}_{self.idx:02d}_gt.png',img)
             imageio.imwrite(f'runs_fine_tuning/{self.args.expname}/{self.args.expname}/{self.global_step:08d}_{self.idx:02d}.png', (img_vis*255).astype('uint8'))
             self.idx += 1
-
+        self.MVSNet.train()
         return log
 
     def validation_epoch_end(self, outputs):
@@ -277,13 +292,13 @@ class MVSSystem(LightningModule):
 
 
     def save_ckpt(self, name='latest'):
-        save_dir = f'runs_fine_tuning/{self.args.expname}/ckpts/'
+        save_dir = f'runs_fine_tuning/{self.args.expname}/ckpts'
         os.makedirs(save_dir, exist_ok=True)
         path = f'{save_dir}/{name}.tar'
         ckpt = {
             'global_step': self.global_step,
             'network_fn_state_dict': self.render_kwargs_train['network_fn'].state_dict(),
-            'volume': self.volume.state_dict(),
+            #'volume': self.volume.state_dict(),
             'network_mvs_state_dict': self.MVSNet.state_dict()}
         if self.render_kwargs_train['network_fine'] is not None:
             ckpt['network_fine_state_dict'] = self.render_kwargs_train['network_fine'].state_dict()
@@ -304,10 +319,11 @@ if __name__ == '__main__':
         name=args.expname,
         debug=False,
         create_git_tag=False
-    )
-
+    )   
+    #import pdb; pdb.set_trace()
     args.num_gpus, args.use_amp = 1, False
-    trainer = Trainer(max_epochs=args.num_epochs,
+    trainer = Trainer(#max_epochs=args.num_epochs,
+                      max_steps=5001,
                       checkpoint_callback=checkpoint_callback,
                       logger=logger,
                       weights_summary=None,
@@ -316,7 +332,7 @@ if __name__ == '__main__':
                       distributed_backend='ddp' if args.num_gpus > 1 else None,
                       num_sanity_val_steps=1, #if args.num_gpus > 1 else 5,
                       # check_val_every_n_epoch = max(system.args.num_epochs//system.args.N_vis,1),
-                      val_check_interval=500,
+                      check_val_every_n_epoch = 5000//len(system.train_dataset),
                       benchmark=True,
                       precision=16 if args.use_amp else 32,
                       amp_level='O1')

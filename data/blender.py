@@ -27,16 +27,23 @@ class BlenderDataset(Dataset):
         self.white_back = True
 
     def read_meta(self):
-        with open(os.path.join(self.root_dir, "transforms_{}.json".format(self.split)), 'r') as f:
-            self.meta = json.load(f)
+        if self.split == 'train':
+            with open(os.path.join(self.root_dir, "transforms_{}.json".format(self.split)), 'r') as f:
+                self.meta = json.load(f)
+        else:
+            with open(os.path.join(self.root_dir, "transforms_test.json".format(self.split)), 'r') as f:
+                self.meta = json.load(f)
 
         # sub select training views from pairing file
         #if os.path.exists('configs/pairs.th'):
         #    name = os.path.basename(self.root_dir)
         if self.split == 'train':
             self.img_idx = np.arange(100)#torch.load('configs/pairs.th')[f'{name}_{self.split}']
+        elif self.split == 'val':
+            self.img_idx = np.arange(200)[::8]
         else:
             self.img_idx = np.arange(200)[::8]
+        #import pdb; pdb.set_trace()
         self.meta['frames'] = [self.meta['frames'][idx] for idx in self.img_idx]
         print(f'===> {self.split}ing index: {self.img_idx}')
         #import pdb; pdb.set_trace()
@@ -83,9 +90,10 @@ class BlenderDataset(Dataset):
 
 
         self.poses = np.stack(self.poses)
+        self.poses_train = self.poses
         if 'train' == self.split:
-            self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)
-            self.all_rgbs = torch.cat(self.all_rgbs, 0)  # (len(self.meta['frames])*h*w, 3)
+            self.all_rays = torch.stack(self.all_rays)  # (len(self.meta['frames])*h*w, 3)
+            self.all_rgbs = torch.stack(self.all_rgbs)  # (len(self.meta['frames])*h*w, 3)
         else:
             self.all_rays = torch.stack(self.all_rays, 0)  # (len(self.meta['frames]),h*w, 3)
             self.all_rgbs = torch.stack(self.all_rgbs, 0).reshape(-1,*self.img_wh[::-1], 3)  # (len(self.meta['frames]),h,w,3)
@@ -164,7 +172,7 @@ class BlenderDataset(Dataset):
 
     def __len__(self):
         if self.split == 'train':
-            return len(self.all_rays)
+            return len(self.img_idx)
         return len(self.all_rgbs)
 
     def __getitem__(self, idx):
@@ -173,8 +181,14 @@ class BlenderDataset(Dataset):
             # view, ray_idx = torch.randint(0,len(self.all_rays),(1,)), torch.randperm(self.all_rays.shape[1])[:self.args.batch_size]
             # sample = {'rays': self.all_rays[view,ray_idx],
             #           'rgbs': self.all_rgbs[view,ray_idx]}
-            sample = {'rays': self.all_rays[idx],
-                      'rgbs': self.all_rgbs[idx]}
+            all_rays = self.all_rays[idx]
+            all_rgbs = self.all_rgbs[idx]
+            
+            perm = torch.randperm(all_rays.shape[0])
+            inds_sampled = perm[:self.args.batch_size]
+            sample = {'rays': all_rays[inds_sampled],
+                      'rgbs': all_rgbs[inds_sampled],
+                      'poses': self.poses[idx]}
 
         else:  # create data for each image separately
             # frame = self.meta['frames'][idx]
@@ -186,5 +200,6 @@ class BlenderDataset(Dataset):
 
             sample = {'rays': rays,
                       'rgbs': img,
+                      'poses': self.poses[idx],
                       'mask': mask}
         return sample

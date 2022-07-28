@@ -75,7 +75,7 @@ def center_poses(poses, blender2opencv):
     # 草，这个地方源代码没有乘这个blender2opencv，做这个操作相当于把相机转换到另一个坐标系了，和一般的nerf坐标系不同
     poses_centered = poses_centered @ blender2opencv
     poses_centered = poses_centered[:, :3]  # (N_images, 3, 4)
-    print('center in center_poses',poses_centered[:, :3, 3].mean(0))
+    #print('center in center_poses',poses_centered[:, :3, 3].mean(0))
 
     return poses_centered, np.linalg.inv(pose_avg_homo) @ blender2opencv
 
@@ -223,9 +223,9 @@ class LLFFDataset(Dataset):
         self.i_test = np.arange(self.poses.shape[0])[::8]
         self.i_train = np.array([j for j in np.arange(int(self.poses.shape[0])) if
                             (j not in self.i_test and j not in self.i_test)])
-        
+        self.poses_train = self.poses[self.i_train]
         if self.split == 'train':
-            self.img_idx = self.i_train    
+            self.img_idx = self.i_train
             
         else:
             self.img_idx = self.i_test
@@ -277,8 +277,9 @@ class LLFFDataset(Dataset):
                                         1)]  # (h*w, 8)
 
         if 'train' == self.split:
-            self.all_rays = torch.cat(self.all_rays, 0)  # ((N_images-1)*h*w, 8)
-            self.all_rgbs = torch.cat(self.all_rgbs, 0)  # ((N_images-1)*h*w, 3)
+            self.all_rays = torch.stack(self.all_rays)  # ((N_images-1)*h*w, 8)
+            self.all_rgbs = torch.stack(self.all_rgbs)  # ((N_images-1)*h*w, 3)
+
         elif 'val' == self.split:
             self.all_rays = torch.stack(self.all_rays, 0)  # (len(self.meta['frames]),h*w, 3)
             self.all_rgbs = torch.stack(self.all_rgbs, 0).reshape(-1,*self.img_wh[::-1], 3)  # (len(self.meta['frames]),h,w,3)
@@ -296,10 +297,10 @@ class LLFFDataset(Dataset):
 
         # Step 1: rescale focal length according to training resolution
         H, W, focal = poses[0, :, -1]  # original intrinsics, same for all images
-        print('original focal', focal)
+        #print('original focal', focal)
 
         focal = [focal* self.img_wh[0] / W, focal* self.img_wh[1] / H]
-        print('porcessed focal', focal)
+        #print('porcessed focal', focal)
 
         # Step 2: correct poses
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
@@ -373,22 +374,30 @@ class LLFFDataset(Dataset):
 
     def __len__(self):
         if self.split == 'train':
-            return len(self.all_rays)
+            #return len(self.all_rays)
+            return len(self.img_idx)
         return len(self.all_rays)
 
     def __getitem__(self, idx):
         if self.split == 'train':  # use data in the buffers
             # view, ray_idx = torch.randint(0,len(self.all_rays),(1,)), torch.randperm(self.all_rays.shape[1])[:self.args.batch_size]
             # sample = {'rays': self.all_rays[view,ray_idx],
-            #           'rgbs': self.all_rgbs[view,ray_idx]}
-            sample = {'rays': self.all_rays[idx],
-                      'rgbs': self.all_rgbs[idx]}
+            #           'rgbs': self.all_rgbs[view,ray_idx]}            
+            all_rays = self.all_rays[idx]
+            all_rgbs = self.all_rgbs[idx]
+            
+            perm = torch.randperm(all_rays.shape[0])
+            inds_sampled = perm[:self.args.batch_size]
+            sample = {'rays': all_rays[inds_sampled],
+                      'rgbs': all_rgbs[inds_sampled],
+                      'poses': self.poses[idx]}
             # sample['idx'] = view
         else:
             img = self.all_rgbs[idx]
             rays = self.all_rays[idx]
-
+            
             sample = {'rays': rays,
-                      'rgbs': img}
+                      'rgbs': img,
+                      'poses': self.poses[idx]}
 
         return sample
